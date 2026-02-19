@@ -8,6 +8,8 @@ A personal project exploring how AI and deterministic automation can work togeth
 
 ## Architecture Overview
 
+<img width="1540" height="305" alt="image" src="https://github.com/user-attachments/assets/b3fbb0c0-f1d5-4d5e-8960-9397f5081e94" />
+
 ```
 Webhook POST ─► Normalize & Hash ─► Idempotency Check ─► Duplicate Detection
                                            │                      │
