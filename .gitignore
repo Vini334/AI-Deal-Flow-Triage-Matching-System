@@ -1,0 +1,26 @@
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.production
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+.claude*
+CLAUDE.md
+
+# n8n local data
+.n8n/
+
+# Node modules (if any tooling is added)
+node_modules/
+
+# Original unsanitized workflow export
+Deal Flow Intake v1.json

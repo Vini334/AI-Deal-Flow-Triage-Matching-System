@@ -1,0 +1,1146 @@
+{
+  "name": "Deal Flow Intake v1",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "deal-flow-intake",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        752,
+        624
+      ],
+      "id": "172bf578-989a-46a3-94d8-b670632a4bba",
+      "name": "Webhook - Deal Intake",
+      "webhookId": "deal-flow-intake"
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\nconst body = $input.first().json.body || $input.first().json;\nconst start_time = Date.now();\nconst required = ['company_name','website','sector','stage','geography','pitch'];\nconst missing = required.filter(f => !body[f] || String(body[f]).trim() === '');\nif (missing.length > 0) {\n  return [{json:{valid:false, error:'Missing required fields: '+missing.join(', '), raw:body, start_time}}];\n}\nconst normalized = {\n  company_name: String(body.company_name).trim(),\n  website: String(body.website).trim().toLowerCase(),\n  sector: String(body.sector).trim().toLowerCase(),\n  stage: String(body.stage).trim().toLowerCase(),\n  geography: String(body.geography).trim().toLowerCase(),\n  raw_pitch: String(body.pitch).trim(),\n  intake_timestamp: new Date().toISOString()\n};\nconst canonical = JSON.stringify({\n  company_name: normalized.company_name.toLowerCase(),\n  website: normalized.website,\n  sector: normalized.sector,\n  stage: normalized.stage,\n  geography: normalized.geography,\n  pitch: normalized.raw_pitch.replace(/\\s+/g, ' ').toLowerCase()\n});\nconst source_hash = crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');\nreturn [{json:{valid:true, ...normalized, normalized_payload:normalized, source_hash, start_time}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        944,
+        624
+      ],
+      "id": "6763a1b9-5eac-4e9b-99a6-00b9110a4e67",
+      "name": "Normalize & Validate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "vc",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1152,
+        624
+      ],
+      "id": "de7583e9-0151-4e46-b1b3-e5aa219d802b",
+      "name": "Validation Error?"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\":\"error\",\"message\":\"Validation failed - missing required fields\"}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        496
+      ],
+      "id": "54be0384-90ac-402d-892b-cbb65f4bccc4",
+      "name": "Respond - Error"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/event_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event_type: 'intake_received', payload: { company_name: $json.company_name, website: $json.website, source_hash: $json.source_hash } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        688
+      ],
+      "id": "75c31547-30c0-4d8e-b759-c53c4e375ec5",
+      "name": "Log Intake Event"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/deals",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "source_hash",
+              "value": "=eq.{{ $('Normalize & Validate').first().json.source_hash }}"
+            },
+            {
+              "name": "select",
+              "value": "id,company_name,source_hash"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1552,
+        688
+      ],
+      "id": "7555a29f-d6a3-4eee-8e0b-808cf8e98a75",
+      "name": "Check Idempotent",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json;\nconst norm = $('Normalize & Validate').first().json;\nlet isReplay = false;\nlet existingDeal = null;\nif (Array.isArray(results) && results.length > 0) {\n  isReplay = true;\n  existingDeal = results[0];\n} else if (results && results.id) {\n  isReplay = true;\n  existingDeal = results;\n}\nconst deal_id = existingDeal ? existingDeal.id : null;\nreturn [{json:{isReplay, deal_id, existingDeal, ...norm}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1744,
+        688
+      ],
+      "id": "0e142f5d-1370-4d95-af82-7da820ce5317",
+      "name": "Evaluate Idempotent"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "rc",
+              "leftValue": "={{ $json.isReplay }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1952,
+        688
+      ],
+      "id": "bb0fd7aa-0470-4ec1-88f7-ff735da3fb7b",
+      "name": "Is Replay?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/event_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ deal_id: $json.deal_id || null, event_type: 'idempotent_replay', payload: { source_hash: $json.source_hash, website: $json.website, company_name: $json.company_name } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        576
+      ],
+      "id": "1ed949d8-5c2a-4256-bafe-364ccd8614ec",
+      "name": "Log Idempotent Replay"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({status: \"already_processed\", message: \"Request already processed\", deal_id: $('Evaluate Idempotent').first().json.deal_id || null, source_hash: $('Evaluate Idempotent').first().json.source_hash || null}) }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2352,
+        576
+      ],
+      "id": "0a6fca1a-78b5-4213-a776-bac15070d92d",
+      "name": "Respond - Already Processed"
+    },
+    {
+      "parameters": {
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/deals",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "website",
+              "value": "=eq.{{ $('Normalize & Validate').first().json.website }}"
+            },
+            {
+              "name": "select",
+              "value": "id,company_name,website,created_at"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        784
+      ],
+      "id": "392d3b06-52b3-411c-aa61-797ed816ff3e",
+      "name": "Check Duplicate",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json;\nconst norm = $('Normalize & Validate').first().json;\nlet isDuplicate = false; let existingDeal = null;\nif (Array.isArray(results) && results.length > 0) { isDuplicate = true; existingDeal = results[0]; }\nelse if (results && results.id) { isDuplicate = true; existingDeal = results; }\nreturn [{json:{isDuplicate, existingDeal, ...norm}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2352,
+        784
+      ],
+      "id": "4905dcd9-4ac7-413f-b1cc-c2f1a4cc755f",
+      "name": "Evaluate Duplicate"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "dc",
+              "leftValue": "={{ $json.isDuplicate }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2544,
+        784
+      ],
+      "id": "81550948-327f-47b6-abc8-6e785e1ab28d",
+      "name": "Is Duplicate?"
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/deals?id=eq.{{ $json.existingDeal.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"updated_at\":\"now()\"}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2752,
+        688
+      ],
+      "id": "1c751400-3d20-4a3c-b021-6beccc888c0d",
+      "name": "Update Duplicate"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/event_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ deal_id: $json.existingDeal ? $json.existingDeal.id : null, event_type: 'duplicate_detected', payload: { company_name: $json.company_name, website: $json.website } }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2944,
+        688
+      ],
+      "id": "cbc81f06-27d1-4725-a42a-e16396901c5b",
+      "name": "Log Duplicate"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"status\":\"duplicate\",\"message\":\"Deal already exists for this website\"}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3152,
+        688
+      ],
+      "id": "dc0d55bc-98ea-47c3-b84f-13d12eca2d43",
+      "name": "Respond - Duplicate"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\n// v6.5 – Hardened prompt with scoring rubric + consistency enforcement\nconst prompt = `You are a senior VC analyst. Analyze the startup below and return ONLY valid JSON — no markdown, no code fences, no extra text.\n\nSCORING RUBRIC (fit_score must be an integer 0–100):\n  0–39   = Weak: poor fit, fundamental issues with sector/stage/team/traction\n  40–59  = Average: some merit but significant gaps; needs major work\n  60–79  = Good: solid fit with notable strengths; a few concerns\n  80–100 = Very Strong: compelling opportunity, strong team, clear traction, excellent thesis fit\n\nCONSISTENCY RULE (mandatory):\n  - If fit_reasoning contains words such as \"very strong\", \"compelling\", \"exceptional\", \"excellent fit\", \"strong traction\", \"high-growth\", or \"outstanding\", then fit_score MUST be >= 70.\n  - If fit_reasoning contains words such as \"weak\", \"poor\", \"lack\", \"no traction\", or \"does not fit\", then fit_score MUST be <= 39.\n  - NEVER contradict the reasoning in the score. If uncertain, choose a conservative score, but do not contradict the reasoning.\n\nSTARTUP DATA:\nCompany: ${input.company_name}\nWebsite: ${input.website}\nSector: ${input.sector}\nStage: ${input.stage}\nGeography: ${input.geography}\nPitch: ${input.raw_pitch}\n\nReturn ONLY this JSON object (no markdown, no wrapping):\n{\"executive_summary\":\"<2-3 sentence summary>\",\"strengths\":[\"strength 1\",\"strength 2\",\"strength 3\"],\"risks\":[\"risk 1\",\"risk 2\"],\"diligence_questions\":[\"question 1\",\"question 2\"],\"fit_score\":<integer 0-100 per rubric above>,\"fit_reasoning\":\"<1-2 sentences explaining the score — must be consistent with the score range>\"}`;\n\nconst gemini_body = {\n  contents: [{parts: [{text: prompt}]}],\n  generationConfig: {\n    temperature: 0.2,\n    responseMimeType: 'application/json'\n  }\n};\n\nreturn [{json: {...input, gemini_body, llm_start: Date.now()}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2752,
+        880
+      ],
+      "id": "3705e802-652c-48d3-a8c9-b0c275d28491",
+      "name": "Build Gemini Body"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={{ $env.GEMINI_API_KEY }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gemini_body) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2944,
+        880
+      ],
+      "id": "351bff4b-ea0b-4db2-a2eb-6ee29bb19069",
+      "name": "Gemini - Generate Memo",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Build Gemini Body').first().json;\nconst geminiResp = $input.first().json;\nconst llm_latency_ms = Date.now() - input.llm_start;\nlet memo, schemaValid = true, schemaErrors = [];\ntry {\n  const text = geminiResp.candidates[0].content.parts[0].text;\n  memo = JSON.parse(text);\n} catch(e) { memo = null; schemaValid = false; schemaErrors.push('JSON parse failed: '+e.message); }\nif (memo) {\n  if (typeof memo.fit_score !== 'number' || !Number.isInteger(memo.fit_score) || memo.fit_score < 0 || memo.fit_score > 100)\n    { schemaErrors.push('fit_score not integer 0..100'); schemaValid = false; }\n  if (typeof memo.executive_summary !== 'string')\n    { schemaErrors.push('executive_summary not string'); schemaValid = false; }\n  ['strengths','risks','diligence_questions'].forEach(f => {\n    if (!Array.isArray(memo[f]) || !memo[f].every(i => typeof i === 'string'))\n      { schemaErrors.push(f+' not array of strings'); schemaValid = false; }\n  });\n  if (typeof memo.fit_reasoning !== 'string')\n    { schemaErrors.push('fit_reasoning not string'); schemaValid = false; }\n}\nif (!schemaValid) {\n  return [{json:{...input, memo_json: memo || {}, fit_score: null, fit_reasoning: 'Schema validation failed: '+schemaErrors.join('; '), status: 'LLM_Error', owner: null, schema_valid: false, schema_errors: schemaErrors, llm_latency_ms}}];\n}\nreturn [{json:{...input, memo_json: memo, fit_score: memo.fit_score, fit_reasoning: memo.fit_reasoning, schema_valid: true, schema_errors: [], llm_latency_ms}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3152,
+        880
+      ],
+      "id": "0c3885da-462f-4325-af21-916ff2b7b45f",
+      "name": "Parse & Validate Memo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "sv",
+              "leftValue": "={{ $json.schema_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3344,
+        880
+      ],
+      "id": "61c09951-c2c4-456e-8a00-5f3632f460ed",
+      "name": "Schema OK?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst validSectors = ['B2B SaaS','Fintech Infra','Climate Tech'];\nconst validStages = ['Pre-seed','Seed','Series A'];\nconst sM = validSectors.some(s => s.toLowerCase() === input.sector.toLowerCase());\nconst tM = validStages.some(s => s.toLowerCase() === input.stage.toLowerCase());\nlet status, owner;\nif (sM && tM && input.fit_score > 65) { status='Qualified'; owner='Partner A'; }\nelse if (input.fit_score >= 50 && input.fit_score <= 65) { status='Review'; owner=null; }\nelse { status='Pass'; owner=null; }\nreturn [{json:{...input, status, owner}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4128,
+        816
+      ],
+      "id": "ee644ac6-07f4-4b72-b6d0-570a2a9e409b",
+      "name": "Thesis Matching"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/deals",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ company_name: $json.company_name, website: $json.website, sector: $json.sector, stage: $json.stage, geography: $json.geography, raw_pitch: $json.raw_pitch, normalized_payload: $json.normalized_payload, memo_json: $json.memo_json, fit_score: $json.fit_score, fit_reasoning: $json.fit_reasoning, status: $json.status, owner: $json.owner, source_hash: $json.source_hash }) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4320,
+        880
+      ],
+      "id": "c06de0dd-858e-4af7-8bf4-7c9b4caeb947",
+      "name": "Save Deal to Supabase"
+    },
+    {
+      "parameters": {
+        "jsCode": "const deal = $input.first().json;\nconst d = Array.isArray(deal) ? deal[0] : deal;\nconst norm = $('Normalize & Validate').first().json;\nconst memo = d.memo_json || {};\nconst topStrength = (memo.strengths && memo.strengths[0]) || 'N/A';\nconst mainRisk = (memo.risks && memo.risks[0]) || 'N/A';\nconst processing_time_ms = Date.now() - norm.start_time;\nconst llm_latency_ms = $('Parse & Validate Memo').first().json.llm_latency_ms || 0;\n\nconst log_body = {deal_id:d.id, event_type:'deal_created', payload:{status:d.status,fit_score:d.fit_score,company_name:d.company_name,processing_time_ms,llm_latency_ms}};\nconst response_body = {status:'success',deal_id:d.id,company:d.company_name,fit_score:d.fit_score,deal_status:d.status,processing_time_ms};\nconst slack_msg = '🚀 *New Deal Intake*\\n*Company:* '+d.company_name+'\\n*Sector:* '+d.sector+'\\n*Score:* '+(d.fit_score||'N/A')+'/100\\n*Status:* '+d.status+'\\n*Top Strength:* '+topStrength+'\\n*Main Risk:* '+mainRisk;\nconst notif_body = {deal_id:d.id, channel:'slack', message:slack_msg};\n\nreturn [{json:{dealId:d.id, log_body, response_body, notif_body}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4528,
+        880
+      ],
+      "id": "c9f16563-ca3d-4746-8762-e79460b68d2b",
+      "name": "Build Log & Response"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/event_logs",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.log_body) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4720,
+        816
+      ],
+      "id": "e30e0316-e8ac-4508-9622-1544bc730bad",
+      "name": "Log Deal Created"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPABASE_URL }}/rest/v1/notifications_queue",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Authorization",
+              "value": "={{ \"Bearer \" + $env.SUPABASE_SERVICE_ROLE_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "Prefer",
+              "value": "return=representation"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($('Build Log & Response').first().json.notif_body) }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4720,
+        960
+      ],
+      "id": "f059ebb4-8936-42e5-8647-0f0ff28647b4",
+      "name": "Insert Notification Queue",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($('Build Log & Response').first().json.response_body) }}",
+        "options": {
+          "responseCode": 201
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        4928,
+        880
+      ],
+      "id": "073813ed-d9ee-459b-bce6-91f3216184ac",
+      "name": "Respond - Success"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SLACK_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({text: $('Build Log & Response').first().json.notif_body.message}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4928,
+        1008
+      ],
+      "id": "fd94b26f-4e07-48b6-b476-3ab10062874f",
+      "name": "Slack Notification",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Score Consistency Guardrail v6.5 (Option B – clamp with logging)\nconst input = $input.first().json;\nconst HIGH_CONFIDENCE_PHRASES = [\n  'very strong', 'compelling', 'exceptional', 'excellent fit',\n  'strong traction', 'high-growth', 'outstanding', 'excellent traction'\n];\nconst reasoning = (input.fit_reasoning || '').toLowerCase();\nconst isHighConfidence = HIGH_CONFIDENCE_PHRASES.some(p => reasoning.includes(p));\nconst originalScore = input.fit_score;\nlet scoreCorrected = false;\nlet correctedScore = originalScore;\n\nif (isHighConfidence && originalScore < 70) {\n  correctedScore = 70;\n  scoreCorrected = true;\n  console.log(`[ScoreGuardrail] Clamped fit_score from ${originalScore} to 70`);\n}\n\nreturn [{json: {\n  ...input,\n  fit_score: correctedScore,\n  score_correction: scoreCorrected ? {\n    corrected: true,\n    original_score: originalScore,\n    corrected_score: correctedScore,\n    trigger_phrase: HIGH_CONFIDENCE_PHRASES.find(p => reasoning.includes(p))\n  } : null\n}}];"
+      },
+      "id": "score-guardrail-v65",
+      "name": "Score Consistency Guardrail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3552,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Force Fit Score Override v6.5 (demo/testing only)\nconst input = $input.first().json;\n\nif (input.force_fit_score != null && input.force_fit_score !== '') {\n  const overrideValue = Number(input.force_fit_score);\n  console.log(`[ForceFitScore] Overriding fit_score from ${input.fit_score} to ${overrideValue}`);\n  return [{json: {\n    ...input,\n    fit_score: overrideValue,\n    force_fit_score_applied: true,\n    force_fit_score_original: input.fit_score\n  }}];\n}\n\nreturn [{json: {...input, force_fit_score_applied: false}}];"
+      },
+      "id": "force-fit-score-v65",
+      "name": "Force Fit Score Override",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3744,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log Score Events v6.5\n// Logs score_consistency_fix and force_fit_score_used to Supabase event_logs\nconst input = $input.first().json;\nconst SUPABASE_URL = $env.SUPABASE_URL + '/rest/v1/event_logs';\nconst SUPABASE_KEY = $env.SUPABASE_SERVICE_ROLE_KEY;\n\nconst logsToWrite = [];\n\nif (input.score_correction?.corrected) {\n  logsToWrite.push({\n    event_type: 'score_consistency_fix',\n    source_hash: input.source_hash || null,\n    payload: JSON.stringify({\n      company: input.company_name,\n      original_score: input.score_correction.original_score,\n      corrected_score: input.score_correction.corrected_score,\n      trigger_phrase: input.score_correction.trigger_phrase,\n      fit_reasoning: input.fit_reasoning\n    })\n  });\n}\n\nif (input.force_fit_score_applied === true) {\n  logsToWrite.push({\n    event_type: 'force_fit_score_used',\n    source_hash: input.source_hash || null,\n    payload: JSON.stringify({\n      company: input.company_name,\n      original_score: input.force_fit_score_original,\n      forced_score: input.fit_score,\n      force_fit_score: input.force_fit_score\n    })\n  });\n}\n\nfor (const log of logsToWrite) {\n  try {\n    await $helpers.httpRequest({\n      method: 'POST',\n      url: SUPABASE_URL,\n      headers: {\n        'apikey': SUPABASE_KEY,\n        'Authorization': 'Bearer ' + SUPABASE_KEY,\n        'Content-Type': 'application/json',\n        'Prefer': 'return=minimal'\n      },\n      body: log\n    });\n    console.log('[LogScoreEvents] Logged:', log.event_type);\n  } catch(e) {\n    console.error('[LogScoreEvents] Failed to log:', log.event_type, e.message);\n  }\n}\n\nreturn [{json: input}];"
+      },
+      "id": "log-score-events-v65",
+      "name": "Log Score Events",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3936,
+        880
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\":\"error\",\"message\":\"Invalid AI memo schema. Deal could not be processed.\",\"code\":\"SCHEMA_VALIDATION_FAILED\"}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "schema-error-respond-v65",
+      "name": "Respond - Schema Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3552,
+        1040
+      ]
+    }
+  ],
+  "pinData": {
+    "Webhook - Deal Intake": [
+      {
+        "json": {
+          "headers": {
+            "host": "your-instance.app.n8n.cloud",
+            "user-agent": "curl/8.0",
+            "content-length": "401",
+            "accept": "*/*",
+            "content-type": "application/json",
+            "x-forwarded-proto": "https"
+          },
+          "params": {},
+          "query": {},
+          "body": {
+            "company_name": "DataForge",
+            "website": "https://dataforge.io",
+            "sector": "B2B SaaS",
+            "stage": "Series A",
+            "geography": "US",
+            "pitch": "DataForge is a B2B SaaS platform that uses AI to automate data pipeline creation and management for mid-market companies. We reduce ETL development time by 90% and have grown ARR from $500K to $2.5M in 18 months.",
+            "round": "Series A",
+            "ask_amount": 8000000,
+            "source": "demo_test"
+          },
+          "webhookUrl": "https://your-instance.app.n8n.cloud/webhook/deal-flow-intake",
+          "executionMode": "production"
+        },
+        "pairedItem": {
+          "item": 0
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Webhook - Deal Intake": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Validate": {
+      "main": [
+        [
+          {
+            "node": "Validation Error?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validation Error?": {
+      "main": [
+        [
+          {
+            "node": "Respond - Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Intake Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Intake Event": {
+      "main": [
+        [
+          {
+            "node": "Check Idempotent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Idempotent": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Idempotent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Idempotent": {
+      "main": [
+        [
+          {
+            "node": "Is Replay?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Replay?": {
+      "main": [
+        [
+          {
+            "node": "Log Idempotent Replay",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Idempotent Replay": {
+      "main": [
+        [
+          {
+            "node": "Respond - Already Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Update Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Gemini Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Log Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Respond - Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Gemini Body": {
+      "main": [
+        [
+          {
+            "node": "Gemini - Generate Memo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - Generate Memo": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate Memo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate Memo": {
+      "main": [
+        [
+          {
+            "node": "Schema OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schema OK?": {
+      "main": [
+        [
+          {
+            "node": "Score Consistency Guardrail",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond - Schema Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thesis Matching": {
+      "main": [
+        [
+          {
+            "node": "Save Deal to Supabase",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Deal to Supabase": {
+      "main": [
+        [
+          {
+            "node": "Build Log & Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Log & Response": {
+      "main": [
+        [
+          {
+            "node": "Log Deal Created",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Insert Notification Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Deal Created": {
+      "main": [
+        [
+          {
+            "node": "Respond - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Notification Queue": {
+      "main": [
+        [
+          {
+            "node": "Slack Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Consistency Guardrail": {
+      "main": [
+        [
+          {
+            "node": "Force Fit Score Override",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Force Fit Score Override": {
+      "main": [
+        [
+          {
+            "node": "Log Score Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Score Events": {
+      "main": [
+        [
+          {
+            "node": "Thesis Matching",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "00000000-0000-0000-0000-000000000000",
+  "meta": {
+    "instanceId": "YOUR_INSTANCE_ID"
+  },
+  "id": "WORKFLOW_ID",
+  "tags": []
+}
