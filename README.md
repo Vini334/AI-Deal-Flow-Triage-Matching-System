@@ -2,7 +2,7 @@
 
 A production-grade n8n automation workflow that processes inbound startup deal submissions through AI-powered analysis, deterministic validation, and rule-based thesis matching — with full observability, idempotency enforcement, and Slack notifications.
 
-Built as a technical demonstration for **Evvolve & Partners**.
+A personal project exploring how AI and deterministic automation can work together in venture capital workflows.
 
 ---
 
@@ -262,4 +262,4 @@ The score consistency guardrail catches a known LLM failure mode: generating ent
 
 ## License
 
-This project was built as a technical assessment for Evvolve & Partners. All rights reserved.
+MIT
